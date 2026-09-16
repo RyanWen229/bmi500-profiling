@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import json; nb = json.load\\(open\\('scanpy_pbmc_pbmc3k.ipynb'\\)\\); print\\(json.dumps\\(nb.get\\('metadata', {}\\).get\\('kernelspec', {}\\), indent=2\\)\\)\")"
+    ]
+  }
+}

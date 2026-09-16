@@ -4,13 +4,17 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import pstats
 import re
 from textwrap import wrap
 
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.figure import Figure
+from matplotlib.font_manager import FontProperties
 import numpy as np
 import pandas as pd
 
@@ -21,6 +25,13 @@ SECTIONS = (
     "read_10x", "filter", "normalize_log1p", "highly_variable_genes", "scale",
     "pca", "neighbors", "louvain", "umap", "write_h5ad", "rank_gene_groups",
 )
+
+PAGE_SIZE = (8.5, 11)
+TEXT_LEFT = 0.07
+TEXT_RIGHT = 0.95
+TEXT_TOP = 0.915
+TEXT_BOTTOM = 0.05
+LINE_SPACING = 1.35
 
 
 def elapsed_seconds(value: str) -> float:
@@ -55,19 +66,74 @@ def parse_log(dataset: str) -> dict:
     }
 
 
-def text_page(pdf: PdfPages, title: str, body: str, size: float = 10, mono: bool = False) -> None:
-    width = 112 if mono else 105
-    wrapped = []
-    for line in body.splitlines():
-        if not line:
+def _wrap_to_page_width(body: str, size: float, family: str) -> list[str]:
+    """Wrap text using the font's rendered width rather than a character guess."""
+    measure_figure = Figure(figsize=PAGE_SIZE, dpi=72)
+    renderer = FigureCanvasAgg(measure_figure).get_renderer()
+    font = FontProperties(family=family, size=size)
+    max_width = (TEXT_RIGHT - TEXT_LEFT) * PAGE_SIZE[0] * 72
+
+    def rendered_width(value: str) -> float:
+        return renderer.get_text_width_height_descent(value, font, ismath=False)[0]
+
+    wrapped: list[str] = []
+    for source_line in body.splitlines():
+        remaining = source_line.expandtabs(4)
+        if not remaining:
             wrapped.append("")
-        else:
-            wrapped.extend(wrap(line, width=width, replace_whitespace=False, break_on_hyphens=False))
-    fig = plt.figure(figsize=(8.5, 11))
-    fig.text(0.07, 0.955, title, fontsize=17, fontweight="bold", va="top")
-    fig.text(0.07, 0.915, "\n".join(wrapped), fontsize=size, family="monospace" if mono else "sans-serif", va="top", linespacing=1.35)
-    pdf.savefig(fig)
-    plt.close(fig)
+            continue
+
+        while rendered_width(remaining) > max_width:
+            low, high = 1, len(remaining)
+            while low < high:
+                middle = (low + high + 1) // 2
+                if rendered_width(remaining[:middle]) <= max_width:
+                    low = middle
+                else:
+                    high = middle - 1
+
+            split_at = low
+            whitespace = [match.start() for match in re.finditer(r"\s+", remaining[:split_at + 1])]
+            if whitespace and whitespace[-1] > len(remaining) - len(remaining.lstrip()):
+                split_at = whitespace[-1]
+
+            line = remaining[:split_at].rstrip()
+            if not line:
+                line = remaining[:low]
+                split_at = low
+            wrapped.append(line)
+            remaining = remaining[split_at:].lstrip()
+
+        wrapped.append(remaining.rstrip())
+    return wrapped
+
+
+def text_page(pdf: PdfPages, title: str, body: str, size: float = 10, mono: bool = False) -> None:
+    """Write as many pages as needed, keeping all text inside the margins."""
+    family = "monospace" if mono else "sans-serif"
+    wrapped = _wrap_to_page_width(body, size, family)
+    available_height = (TEXT_TOP - TEXT_BOTTOM) * PAGE_SIZE[1] * 72
+    line_height = size * LINE_SPACING
+    lines_per_page = max(1, 1 + math.floor((available_height - size) / line_height))
+    page_count = max(1, math.ceil(len(wrapped) / lines_per_page))
+
+    for page_index in range(page_count):
+        start = page_index * lines_per_page
+        page_lines = wrapped[start:start + lines_per_page]
+        page_title = title if page_count == 1 else f"{title} ({page_index + 1}/{page_count})"
+        fig = plt.figure(figsize=PAGE_SIZE)
+        fig.text(TEXT_LEFT, 0.955, page_title, fontsize=17, fontweight="bold", va="top")
+        fig.text(
+            TEXT_LEFT,
+            TEXT_TOP,
+            "\n".join(page_lines),
+            fontsize=size,
+            family=family,
+            va="top",
+            linespacing=LINE_SPACING,
+        )
+        pdf.savefig(fig)
+        plt.close(fig)
 
 
 def profile_top(dataset: str, limit: int = 7):

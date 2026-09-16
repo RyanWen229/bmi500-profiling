@@ -32,7 +32,6 @@ def main():
 
     sc.settings.verbosity = 2
     sc.settings.n_jobs = args.num_threads
-    sc.settings.set_figure_params(dpi=80, facecolor="white")
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
     Path(args.profile_dir).mkdir(parents=True, exist_ok=True)
     timings = {}
