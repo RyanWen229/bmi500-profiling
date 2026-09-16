@@ -1,169 +1,88 @@
-# %%
+#!/usr/bin/env python
+"""Profile the Scanpy PBMC workflow with coarse section-level timings.
 
+The rank-gene step is deliberately executed once, under ``cProfile``. This
+avoids adding an unprofiled duplicate computation to the reported runtime.
+"""
+
+import argparse
 import cProfile
+import json
+import os
+from pathlib import Path
+import time
 
-from typing_extensions import ParamSpecArgs
-import numpy as np
-import pandas as pd
 import scanpy as sc
 
-import time
-import sys
-import argparse
-t0 = time.time()
-# %%
-sc.settings.verbosity = 3             # verbosity: errors (0), warnings (1), info (2), hints (3)
-sc.logging.print_header()
-sc.settings.set_figure_params(dpi=80, facecolor='white')
-# sc.settings.n_jobs = int(sys.argv[4])
-sc.settings.n_jobs = 1
 
-print(f"using {sc.settings.n_jobs} threads")
-
-t1 = time.time()
-print(f"Section 1 took {t1 - t0:.4f}s")
-# %%
-parser = argparse.ArgumentParser(description='Process arguments.')
-parser.add_argument('--data-dir', type=str, help='Directory containing the dataset subdirectories', default='data')
-parser.add_argument('--data-set', type=str, help='Dataset name, which is the subdirectory name', default='pbmc3k')
-parser.add_argument('--out-dir', type=str, help='Output directory', required=False, default='data')
-parser.add_argument('--num-threads', type=int, help='Number of threads', default=1, required=False)
-
-args = parser.parse_args()
-
-datadir = args.data_dir if args.data_dir.endswith('/') else args.data_dir + '/'
-dataset = args.data_set 
-outdir = args.out_dir if args.out_dir.endswith('/') else args.out_dir + '/'
-nthreads = args.num_threads
-
-t2 = time.time()
-print(f"Section 2 took {t2 - t1:.4f}s")
-#%%
-
-# I/O
-results_file = "/".join([outdir, dataset + '.scanpy.h5ad'])  # the file that will store the analysis results
-
-adata = sc.read_10x_mtx(
-    #'/nethome/tpan7/scgc/data/' + dataset + '/filtered_gene_bc_matrices/hg19',  # the directory with the `.mtx` file
-    "/".join([datadir, dataset, 'filtered_gene_bc_matrices']),  # the directory with the `.mtx` file
-    var_names='gene_symbols',                # use gene symbols for the variable names (variables-axis index)
-    cache=True)                              # write a cache file for faster subsequent reading
-
-adata.var_names_make_unique()  # this is unnecessary if using `var_names='gene_ids'` in `sc.read_10x_mtx`
-
-t3 = time.time()
-print(f"Section 3 took {t3 - t2:.4f}s")
-# %%
-# preprocessing
-
-# basic filtering
-sc.pp.filter_cells(adata, min_genes=200)
-sc.pp.filter_genes(adata, min_cells=3)
-
-t4 = time.time()
-print(f"Section 4 took {t4 - t3:.4f}s")
-#%%
-# metric
-#adata.var['mt'] = adata.var_names.str.startswith('MT-')  # annotate the group of mitochondrial genes as 'mt'
-#sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], percent_top=None, log1p=False, inplace=True)
-
-# filtering by slicing the AnnData object
-#adata = adata[adata.obs.n_genes_by_counts < 2500, :]
-#adata = adata[adata.obs.pct_counts_mt < 5, :]
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run and profile a PBMC Scanpy workflow.")
+    parser.add_argument("--data-dir", default="data", help="Directory containing PBMC folders")
+    parser.add_argument("--data-set", default="pbmc3k", choices=("pbmc3k", "pbmc6k", "pbmc10k"))
+    parser.add_argument("--out-dir", default="results", help="Directory for AnnData outputs")
+    parser.add_argument("--profile-dir", default="profiles", help="Directory for cProfile outputs")
+    parser.add_argument("--num-threads", type=int, default=1)
+    return parser.parse_args()
 
 
-# and normalize to 10K reads per cell
-sc.pp.normalize_total(adata, target_sum=1e4)
-sc.pp.log1p(adata)
+def main():
+    args = parse_args()
+    for variable in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMBA_NUM_THREADS"):
+        os.environ[variable] = str(args.num_threads)
 
-t5 = time.time()
-print(f"Section 5 took {t5 - t4:.4f}s")
-# %%
-# highly variable genes
+    sc.settings.verbosity = 2
+    sc.settings.n_jobs = args.num_threads
+    sc.settings.set_figure_params(dpi=80, facecolor="white")
+    Path(args.out_dir).mkdir(parents=True, exist_ok=True)
+    Path(args.profile_dir).mkdir(parents=True, exist_ok=True)
+    timings = {}
 
-#sc.pp.highly_variable_genes(adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
-sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=2000)
+    def section(name, function):
+        start = time.perf_counter()
+        result = function()
+        elapsed = time.perf_counter() - start
+        timings[name] = elapsed
+        print(f"SECTION_TIMING dataset={args.data_set} section={name} seconds={elapsed:.4f}", flush=True)
+        return result
 
-# freeze data.
-adata.raw = adata
+    print(f"RUN_METADATA dataset={args.data_set} threads={args.num_threads}", flush=True)
+    input_dir = Path(args.data_dir) / args.data_set / "filtered_gene_bc_matrices"
+    # Disable Scanpy's on-disk read cache so every dataset measurement includes
+    # comparable Matrix Market input I/O rather than a cache hit from a prior run.
+    adata = section("read_10x", lambda: sc.read_10x_mtx(input_dir, var_names="gene_symbols", cache=False))
+    adata.var_names_make_unique()
+    print(f"DATASET_SHAPE dataset={args.data_set} cells={adata.n_obs} genes={adata.n_vars}", flush=True)
 
-# filtering by highly variable genes.
-adata = adata[:, adata.var.highly_variable]
+    section("filter", lambda: (sc.pp.filter_cells(adata, min_genes=200), sc.pp.filter_genes(adata, min_cells=3)))
+    section("normalize_log1p", lambda: (sc.pp.normalize_total(adata, target_sum=1e4), sc.pp.log1p(adata)))
+    def select_hvg():
+        nonlocal adata
+        sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=2000)
+        adata.raw = adata
+        adata = adata[:, adata.var.highly_variable]
 
-t6 = time.time()
-print(f"Section 6 took {t6 - t5:.4f}s")
-#%%
-# regres out effects of total counts per cell an d% mitochondrial genes
-#sc.pp.regress_out(adata, ['total_counts', 'pct_counts_mt'])
-sc.pp.scale(adata)
+    section("highly_variable_genes", select_hvg)
 
-t7 = time.time()
-print(f"Section 7 took {t7 - t6:.4f}s")
-# %%
-# report adata - so we can check ot see if we are comparable to Seurat
-# adata.write(results_file)
-# adata
+    section("scale", lambda: sc.pp.scale(adata))
+    section("pca", lambda: sc.tl.pca(adata, svd_solver="arpack", n_comps=30))
+    section("neighbors", lambda: sc.pp.neighbors(adata, n_pcs=30))
+    section("louvain", lambda: sc.tl.louvain(adata, resolution=0.5))
+    section("umap", lambda: sc.tl.umap(adata, n_components=30))
+    section("write_h5ad", lambda: adata.write(Path(args.out_dir) / f"{args.data_set}.scanpy.h5ad"))
 
-# %%
-# pca.  parallel via OMP_NUM_THREADS
-sc.tl.pca(adata, svd_solver='arpack', n_comps=30)
+    profile_path = Path(args.profile_dir) / f"rank_genes_{args.data_set}_profile.prof"
 
-# adata.write(results_file)
-# adata
+    def rank_genes():
+        profiler = cProfile.Profile()
+        profiler.enable()
+        sc.tl.rank_genes_groups(adata, "louvain", method="wilcoxon", use_raw=True)
+        profiler.disable()
+        profiler.dump_stats(profile_path)
 
-t8 = time.time()
-print(f"Section 8 took {t8 - t7:.4f}s")
-# %%
-# neighborhood graph
-sc.pp.neighbors(adata, n_pcs=30)
-
-t9 = time.time()
-print(f"Section 9 took {t9 - t8:.4f}s")
-# %% 
-# for fixing disconnected clusters or connectivity issues:
-#sc.tl.paga(adata)
-#sc.pl.paga(adata, plot=False)  # remove `plot=False` if you want to see the coarse-grained graph
-#cs.tl.umap(adata, init_pos='paga')
-
-
-# adata.write(results_file)
-# adata
+    section("rank_gene_groups", rank_genes)
+    print("TIMINGS_JSON " + json.dumps({"dataset": args.data_set, "sections": timings}, sort_keys=True), flush=True)
+    print(f"PROFILE_OUTPUT {profile_path}", flush=True)
 
 
-# %%
-# clustering  (currently uses leiden,  previously using louvain (like Seurat).)
-#sc.tl.leiden(adata)
-sc.tl.louvain(adata, resolution = 0.5)
-
-t10 = time.time()
-print(f"Section 10 took {t10 - t9:.4f}s")
-#%%
-# umap
-sc.tl.umap(adata, n_components=30)
-
-t11 = time.time()
-print(f"Section 11 took {t11 - t10:.4f}s")
-#%%
-adata.write(results_file)
-adata
-
-t12 = time.time()
-print(f"Section 12 took {t12 - t11:.4f}s")
-# %%
-# support t-test, wilcoxon, logistic regression
-# find marker genes
-sc.tl.rank_genes_groups(adata, 'louvain', method='wilcoxon', use_raw=True)
-
-t13 = time.time()
-print(f"Section 13 took {t13 - t12:.4f}s")
-
-import cProfile
-
-#%% Last Step: Rank Genes
-# Using runctx allows you to pass your local variables (like adata) safely
-cProfile.runctx(
-    "sc.tl.rank_genes_groups(adata, 'louvain', method='wilcoxon', use_raw=True)", 
-    globals(), 
-    locals(), 
-    filename=f"rank_genes_{dataset}_profile.prof" # Optional: save to a file
-)
+if __name__ == "__main__":
+    main()

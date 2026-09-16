@@ -1,0 +1,31 @@
+Codes are generated with Codex (GPT-5.6 Terra) by inserting a # TODO in the .py script.
+
+1. mulvec_multply.py:
+# TODO:
+# create a function to compute the dot product of two vectors using a for loop
+# add comments for the selected function
+
+
+
+# create a function to compute the matrix-vector product using the dot_product function
+# add comments for the selected function
+
+
+
+# create a main function to test the matrix-vector product function using randomly generated data of size 1000x1000
+# add comments for the selected function
+
+Answer:
+Implemented dot_product, matrix_vector_product, and a 1000×1000 random-data main in [matvec_multiply.py](/home/swen30/Desktop/bmi500-profiling/matvec_multiply.py). Removed the TODO/comments and verified basic multiplication behavior.
+
+
+2. 
+# TODO: assess possible failure modes for the matvec_multiply function, and add logic to guard them
+Answer:
+Implemented `dot_product`, `matrix_vector_product`, and a 1000×1000 random-data `main` in [matvec_multiply.py](/home/swen30/Desktop/bmi500-profiling/matvec_multiply.py). Removed the TODO/comments and verified basic multiplication behavior.
+
+
+3.
+# TODO: test examples should be generated from the un-guarded ver. [Also record our conversations in the AI_code_gen.txt]
+Answer:
+Added `unittest` coverage for the valid-input behavior of `dot_product` and `matrix_vector_product` in `matvec_tests.py`. The expected results use examples that were valid before dimension-mismatch guarding was added. Removed the TODO and ran the tests successfully.

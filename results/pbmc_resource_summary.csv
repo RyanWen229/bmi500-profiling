@@ -1,0 +1,4 @@
+Dataset,Input cells,Genes,Wall (s),CPU (%),Peak RSS (GiB)
+pbmc3k,2700,32738,25.26,97,0.817
+pbmc6k,5419,32738,36.49,98,0.869
+pbmc10k,11769,33538,77.23,100,1.665
