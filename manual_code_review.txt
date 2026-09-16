@@ -1,0 +1,14 @@
+Manual code review (partnered with Zhu Xu):
+
+Overall:
+dot_product is a straightforward, correct implementation of the Euclidean inner product.
+matrix_vector_product correctly computes y = Ax for a rectangular matrix A and vector x, with a clear dimension check that raises ValueError on mismatch.
+
+Limits:
+The main function exercises a non-trivial size (1000×1000) without printing or asserting anything.
+Pure-Python nested loops will be slow. A 1000×1000 matrix-vector product is O(n^2) scalar multiplies.
+No validation of matrix shape consistency. The code only checks that each row has the same length as the vector. It does not verify that all rows have the same length as each other.
+Missing docstring / type hints.
+
+Verdict:
+The code is correct for the stated purpose and is clean enough, but a few small optimizations would turn it into a solid baseline for later acceleration experiments.
